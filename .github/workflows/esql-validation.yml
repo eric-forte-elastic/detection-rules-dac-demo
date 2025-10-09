@@ -81,6 +81,7 @@ jobs:
           DR_KIBANA_URL: ${{ secrets.cloud_id == '' && 'https://localhost:5601' || '' }}
           DR_ELASTICSEARCH_URL: ${{ secrets.cloud_id == '' && 'https://localhost:9200' || '' }}
           DR_API_KEY: ${{ secrets.api_key || env.DR_API_KEY }}
+          DR_IGNORE_SSL_ERRORS: ${{ secrets.cloud_id == '' && 'true' || '' }}
         run: |
           cd detection-rules
           python -m detection_rules dev test esql-remote-validation
