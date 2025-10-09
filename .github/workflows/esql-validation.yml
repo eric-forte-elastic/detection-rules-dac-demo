@@ -29,7 +29,7 @@ jobs:
         run: |
           cd elastic-container
           GENERATED_PASSWORD=$(openssl rand -base64 16)
-          sed -i 's/changeme/$GENERATED_PASSWORD/' .env
+          sed -i 's/changeme/"'"$GENERATED_PASSWORD"'"/' .env
           echo "GENERATED_PASSWORD=$GENERATED_PASSWORD" >> $GITHUB_ENV
           set -x
           echo $GENERATED_PASSWORD
