@@ -41,7 +41,8 @@ jobs:
         with:
             fetch-depth: 0
             path: detection-rules
-            repository: elastic/detection-rules        
+            repository: elastic/detection-rules
+            ref: esql-field-validation
 
       - name: Set up Python 3.13
         uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6
@@ -56,8 +57,8 @@ jobs:
           ES_USER: "elastic"
           ES_PASSWORD: ${{ env.GENERATED_PASSWORD }}
         if: ${{ !env.DR_CLOUD_ID && !env.DR_API_KEY }}
-        working-directory: detection-rules
         run: |
+          cd detection-rules
           response=$(curl -k -X POST -u "$ES_USER:$ES_PASSWORD" -H "Content-Type: application/json" -d '{
               "name": "tmp-api-key",
               "expiration": "1d"
