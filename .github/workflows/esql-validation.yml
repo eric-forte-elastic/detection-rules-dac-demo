@@ -77,7 +77,7 @@ jobs:
 
       - name: Remote Test ESQL Rules
         env:
-          DR_CLOUD_ID: ${{ secrets.cloud_id }}
+          DR_CLOUD_ID: ${{ secrets.cloud_id || '' }}
           DR_KIBANA_URL: ${{ secrets.cloud_id == '' && 'https://localhost:5601' || '' }}
           DR_ELASTICSEARCH_URL: ${{ secrets.cloud_id == '' && 'https://localhost:9200' || '' }}
           DR_API_KEY: ${{ secrets.api_key || env.DR_API_KEY }}
