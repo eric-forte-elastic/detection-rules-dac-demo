@@ -65,6 +65,7 @@ jobs:
           }' "$DR_ELASTICSEARCH_URL/_security/api_key")
 
           DR_API_KEY=$(echo "$response" | jq -r '.encoded')
+          echo "::add-mask::$DR_API_KEY"
           echo "DR_API_KEY=$DR_API_KEY" >> $GITHUB_ENV
 
       - name: Install dependencies
@@ -79,7 +80,6 @@ jobs:
           DR_CLOUD_ID: ${{ secrets.cloud_id }}
           DR_KIBANA_URL: ${{ secrets.cloud_id == '' && 'https://localhost:5601' || '' }}
           DR_ELASTICSEARCH_URL: ${{ secrets.cloud_id == '' && 'https://localhost:9200' || '' }}
-          DR_ES_USER: ${{ secrets.cloud_id == '' && 'elastic' || '' }}
           DR_API_KEY: ${{ secrets.api_key || env.DR_API_KEY }}
         run: |
           cd detection-rules
