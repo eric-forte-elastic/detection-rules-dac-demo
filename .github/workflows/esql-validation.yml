@@ -32,6 +32,7 @@ jobs:
           sed -i "s/changeme/\"$GENERATED_PASSWORD\"/" .env
           sed -i 's/ELASTIC_PASSWORD="\(.*\)"/ELASTIC_PASSWORD=\1/' .env
           sed -i 's/KIBANA_PASSWORD="\(.*\)"/KIBANA_PASSWORD=\1/' .env
+          echo "::add-mask::$GENERATED_PASSWORD"
           echo "GENERATED_PASSWORD=$GENERATED_PASSWORD" >> $GITHUB_ENV
           set -x
           bash elastic-container.sh start
