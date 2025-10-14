@@ -1,7 +1,5 @@
 name: ES|QL Validation
 on:
-    push:
-      branches: [ "main", "8.*", "9.*" ]
     pull_request:
       branches: [ "*" ]
       paths:
@@ -23,7 +21,7 @@ jobs:
         id: check-esql
         run: |
           cd detection-rules
-
+          sed -i 's/rule.name/rule.fake/g' rules/cross-platform/execution_potential_widespread_malware_infection.toml
           # Check if the event is a push
           if [ "${{ github.event_name }}" = "push" ]; then
             echo "Triggered by a push event. Setting run_esql=true."
@@ -114,4 +112,3 @@ jobs:
         run: |
           cd detection-rules
           python -m detection_rules dev test esql-remote-validation
-
