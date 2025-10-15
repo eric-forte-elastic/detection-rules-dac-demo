@@ -21,7 +21,7 @@ jobs:
         id: check-esql
         run: |
           cd detection-rules
-          sed -i 's/rule.name/rule.faketwo/g' rules/cross-platform/execution_potential_widespread_malware_infection.toml
+          sed -i 's/rule.name/rule.fake/g' rules/cross-platform/execution_potential_widespread_malware_infection.toml
           # Check if the event is a push
           if [ "${{ github.event_name }}" = "push" ]; then
             echo "Triggered by a push event. Setting run_esql=true."
@@ -46,9 +46,9 @@ jobs:
 
       - name: Check out repository
         env:
-          DR_KIBANA_URL: ${{ secrets.kibana_url }}
+          DR_CLOUD_ID: ${{ secrets.cloud_id }}
           DR_API_KEY: ${{ secrets.api_key }}
-        if: ${{ !env.DR_KIBANA_URL && !env.DR_API_KEY && env.run_esql == 'true' }}
+        if: ${{ !env.DR_CLOUD_ID && !env.DR_API_KEY && env.run_esql == 'true' }}
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           path: elastic-container
@@ -56,9 +56,9 @@ jobs:
 
       - name: Build and run containers
         env:
-          DR_KIBANA_URL: ${{ secrets.kibana_url }}
+          DR_CLOUD_ID: ${{ secrets.cloud_id }}
           DR_API_KEY: ${{ secrets.api_key }}
-        if: ${{ !env.DR_KIBANA_URL && !env.DR_API_KEY && env.run_esql == 'true' }}
+        if: ${{ !env.DR_CLOUD_ID && !env.DR_API_KEY && env.run_esql == 'true' }}
         run: |
           cd elastic-container
           GENERATED_PASSWORD=$(openssl rand -base64 16)
@@ -70,12 +70,12 @@ jobs:
           
       - name: Get API Key and setup auth
         env:
-          DR_KIBANA_URL: ${{ secrets.kibana_url }}
+          DR_CLOUD_ID: ${{ secrets.cloud_id }}
           DR_API_KEY: ${{ secrets.api_key }}
           DR_ELASTICSEARCH_URL: "https://localhost:9200"
           ES_USER: "elastic"
           ES_PASSWORD: ${{ env.GENERATED_PASSWORD }}
-        if: ${{ !env.DR_KIBANA_URL && !env.DR_API_KEY && env.run_esql == 'true' }}
+        if: ${{ !env.DR_CLOUD_ID && !env.DR_API_KEY && env.run_esql == 'true' }}
         run: |
           cd detection-rules
           response=$(curl -k -X POST -u "$ES_USER:$ES_PASSWORD" -H "Content-Type: application/json" -d '{
@@ -104,11 +104,11 @@ jobs:
       - name: Remote Test ESQL Rules
         if: ${{ env.run_esql == 'true' }}
         env:
-          DR_CLOUD_ID: ${{ '' }}
-          DR_KIBANA_URL: ${{ secrets.kibana_url || 'https://localhost:5601' }}
-          DR_ELASTICSEARCH_URL: ${{ secrets.elasticsearch_url || 'https://localhost:9200' }}
+          DR_CLOUD_ID: ${{ secrets.cloud_id || '' }}
+          DR_KIBANA_URL: ${{ secrets.cloud_id == '' && 'https://localhost:5601' || '' }}
+          DR_ELASTICSEARCH_URL: ${{ secrets.cloud_id == '' && 'https://localhost:9200' || '' }}
           DR_API_KEY: ${{ secrets.api_key || env.DR_API_KEY }}
-          DR_IGNORE_SSL_ERRORS: ${{ secrets.kibana_url == '' && 'true' || '' }}
+          DR_IGNORE_SSL_ERRORS: ${{ secrets.cloud_id == '' && 'true' || '' }}
         run: |
           cd detection-rules
           python -m detection_rules dev test esql-remote-validation
