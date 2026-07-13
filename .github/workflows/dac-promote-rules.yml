@@ -1,0 +1,255 @@
+# DaC promotion pipeline — companion to the Elastic workflow
+# "DaC - Promote Tagged Rules from Dev to Prod".
+#
+# Install this file in your detection-rules FORK at:
+#   .github/workflows/dac-promote-rules.yml
+#
+# It is dispatched by the Elastic workflow (or manually from the Actions tab)
+# and:
+#   1. exports rules tagged with `promotion_tag` from the `dev_space` Kibana
+#      space into the fork's custom rules directory,
+#   2. runs the detection-rules unit test suite against them,
+#   3. on success, imports the rules into the `prod_space` Kibana space,
+#   4. on failure, indexes a failure document into `failure_index` — the
+#      "DaC Promotion Failure" rule in the dev space alerts on it, with the
+#      unit test output in `error.message`.
+#
+# Required repository secrets (Settings > Secrets and variables > Actions):
+#   Either:
+#     DR_CLOUD_ID          Elastic Cloud ID (deployment overview page in the Cloud console)
+#   or both:
+#     DR_KIBANA_URL        e.g. https://my-deployment.kb.us-east-1.aws.elastic.cloud
+#     DR_ELASTICSEARCH_URL e.g. https://my-deployment.es.us-east-1.aws.elastic.cloud
+#   And always:
+#     DR_API_KEY           base64 Elasticsearch API key with rule + index privileges
+#   Do not set DR_CLOUD_ID together with DR_KIBANA_URL — the detection-rules
+#   client rejects a cloud id combined with a mismatching Kibana URL.
+#
+# Recommended: commit a custom rules directory to the fork once
+# (`python -m detection_rules custom-rules setup-config dac-promotion-rules`)
+# so its _config.yaml / test config are version-controlled. If it is missing,
+# this workflow bootstraps a default one for the run.
+
+name: DaC - Promote rules from dev to prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      rule_ids:
+        description: "Comma-separated rule_id values in the batch (informational; export selects by tag)"
+        required: false
+        default: ""
+        type: string
+      dev_space:
+        description: "Kibana space to export tagged rules from"
+        required: false
+        default: "dev"
+        type: string
+      prod_space:
+        description: "Kibana space to import passing rules into"
+        required: false
+        default: "prod"
+        type: string
+      promotion_tag:
+        description: "Rule tag that marks a rule for promotion"
+        required: false
+        default: "production"
+        type: string
+      failure_index:
+        description: "Elasticsearch index to write promotion failures to"
+        required: false
+        default: "dac-promotion-failures"
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  DR_CLOUD_ID: ${{ secrets.DR_CLOUD_ID }}
+  DR_KIBANA_URL: ${{ secrets.DR_KIBANA_URL }}
+  DR_ELASTICSEARCH_URL: ${{ secrets.DR_ELASTICSEARCH_URL }}
+  DR_API_KEY: ${{ secrets.DR_API_KEY }}
+  CUSTOM_RULES_DIR: ${{ github.workspace }}/dac-promotion-rules
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+
+    steps:
+      # The detection-rules CLI accepts DR_CLOUD_ID or DR_KIBANA_URL directly,
+      # but the failure-report step needs a raw Elasticsearch endpoint. When
+      # only a cloud id is given, derive it the same way the detection-rules
+      # Kibana client does (payload = base64 "domain$es_uuid$kb_uuid", port
+      # 9243). Fails fast when the secrets are missing or ambiguous.
+      - name: Validate connection settings
+        run: |
+          if [ -z "${DR_API_KEY}" ]; then
+            echo "::error::DR_API_KEY secret is not set."
+            exit 1
+          fi
+          if [ -n "${DR_CLOUD_ID}" ] && [ -n "${DR_KIBANA_URL}" ]; then
+            echo "::error::Set either DR_CLOUD_ID or DR_KIBANA_URL/DR_ELASTICSEARCH_URL, not both."
+            exit 1
+          fi
+          if [ -n "${DR_ELASTICSEARCH_URL}" ]; then
+            echo "ES_ENDPOINT=${DR_ELASTICSEARCH_URL}" >> "${GITHUB_ENV}"
+          elif [ -n "${DR_CLOUD_ID}" ]; then
+            decoded=$(printf '%s' "${DR_CLOUD_ID#*:}" | base64 -d 2>/dev/null || true)
+            domain=$(printf '%s' "${decoded}" | cut -d'$' -f1)
+            es_uuid=$(printf '%s' "${decoded}" | cut -d'$' -f2)
+            if [ -z "${domain}" ] || [ -z "${es_uuid}" ]; then
+              echo "::error::DR_CLOUD_ID does not decode to a valid Cloud ID."
+              exit 1
+            fi
+            echo "ES_ENDPOINT=https://${es_uuid}.${domain%:443}:9243" >> "${GITHUB_ENV}"
+            echo "Derived the Elasticsearch endpoint from DR_CLOUD_ID."
+          else
+            echo "::error::Set the DR_CLOUD_ID secret, or both DR_KIBANA_URL and DR_ELASTICSEARCH_URL."
+            exit 1
+          fi
+
+      - name: Checkout detection-rules fork
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install detection-rules
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]" lib/kibana lib/kql
+
+      # The CLI refuses to start when CUSTOM_RULES_DIR points at a directory
+      # without _config.yaml, so the bootstrap itself must run with it unset.
+      - name: Bootstrap custom rules directory (first run only)
+        run: |
+          if [ ! -f "${CUSTOM_RULES_DIR}/_config.yaml" ]; then
+            echo "No committed custom rules directory found — creating a default one."
+            dir="${CUSTOM_RULES_DIR}"
+            env -u CUSTOM_RULES_DIR python -m detection_rules custom-rules setup-config "${dir}"
+          fi
+
+      - name: Export tagged rules from the dev space
+        id: export
+        env:
+          DEV_SPACE: ${{ inputs.dev_space }}
+          PROMOTION_TAG: ${{ inputs.promotion_tag }}
+        run: |
+          python -m detection_rules kibana --space "${DEV_SPACE}" export-rules \
+            --directory "${CUSTOM_RULES_DIR}/rules" \
+            --exceptions-directory "${CUSTOM_RULES_DIR}/exceptions" \
+            --export-exceptions \
+            --export-query "alert.attributes.tags: \"${PROMOTION_TAG}\"" \
+            --custom-rules-only \
+            --strip-version \
+            --skip-errors
+          count=$(find "${CUSTOM_RULES_DIR}/rules" -name '*.toml' | wc -l)
+          echo "Exported ${count} rule file(s)."
+          if [ "${count}" -eq 0 ]; then
+            echo "::error::No rules were exported — nothing tagged \"${PROMOTION_TAG}\" in space \"${DEV_SPACE}\"?"
+            exit 1
+          fi
+          # Fingerprint the exported rule contents. The failure alert rule
+          # suppresses on this value, so an unchanged failing batch keeps
+          # updating the existing alert instead of raising new ones; editing
+          # any tagged rule changes the fingerprint and re-alerts.
+          fingerprint=$(find "${CUSTOM_RULES_DIR}/rules" -name '*.toml' -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+          echo "fingerprint=${fingerprint}" >> "${GITHUB_OUTPUT}"
+          echo "Rules fingerprint: ${fingerprint}"
+
+      - name: Run unit tests
+        id: unit_tests
+        run: |
+          set -o pipefail
+          python -m detection_rules test 2>&1 | tee "${RUNNER_TEMP}/unit-tests.log"
+
+      - name: Import rules into the prod space
+        id: import
+        env:
+          PROD_SPACE: ${{ inputs.prod_space }}
+        run: |
+          python -m detection_rules kibana --space "${PROD_SPACE}" import-rules \
+            --directory "${CUSTOM_RULES_DIR}/rules" \
+            --overwrite \
+            --overwrite-exceptions
+
+      - name: Upload exported rules and test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dac-promotion-${{ github.run_id }}
+          path: |
+            ${{ env.CUSTOM_RULES_DIR }}/rules
+            ${{ env.CUSTOM_RULES_DIR }}/exceptions
+            ${{ runner.temp }}/unit-tests.log
+          if-no-files-found: ignore
+
+      # Indexing this document raises the "DaC Promotion Failure" alert in the
+      # dev space (the Elastic workflow bootstraps the rule watching this index).
+      - name: Report failure to the dev space
+        if: failure()
+        env:
+          DEV_SPACE: ${{ inputs.dev_space }}
+          PROD_SPACE: ${{ inputs.prod_space }}
+          PROMOTION_TAG: ${{ inputs.promotion_tag }}
+          FAILURE_INDEX: ${{ inputs.failure_index }}
+          RULE_IDS: ${{ inputs.rule_ids }}
+          RULES_FINGERPRINT: ${{ steps.export.outputs.fingerprint }}
+          EXPORT_OUTCOME: ${{ steps.export.outcome }}
+          TESTS_OUTCOME: ${{ steps.unit_tests.outcome }}
+          IMPORT_OUTCOME: ${{ steps.import.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "${ES_ENDPOINT}" ]; then
+            echo "::error::No Elasticsearch endpoint available (connection settings invalid) — cannot index the failure document."
+            exit 1
+          fi
+          if [ "${TESTS_OUTCOME}" = "failure" ]; then stage="unit-tests"
+          elif [ "${EXPORT_OUTCOME}" = "failure" ]; then stage="export"
+          elif [ "${IMPORT_OUTCOME}" = "failure" ]; then stage="import-to-prod"
+          else stage="setup"
+          fi
+          log_tail=$(tail -c 8000 "${RUNNER_TEMP}/unit-tests.log" 2>/dev/null || true)
+          [ -n "${log_tail}" ] || log_tail="No unit test output captured (failure occurred before or after the test stage — see the run URL)."
+          # No fingerprint means the failure predates a successful export;
+          # group those by stage so repeats suppress together too.
+          [ -n "${RULES_FINGERPRINT}" ] || RULES_FINGERPRINT="stage-${stage}"
+
+          jq -n \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg stage "${stage}" \
+            --arg dev "${DEV_SPACE}" \
+            --arg prod "${PROD_SPACE}" \
+            --arg tag "${PROMOTION_TAG}" \
+            --arg rule_ids "${RULE_IDS}" \
+            --arg fingerprint "${RULES_FINGERPRINT}" \
+            --arg run_url "${RUN_URL}" \
+            --arg log "${log_tail}" \
+            '{
+              "@timestamp": $ts,
+              "message": (if $stage == "unit-tests"
+                then "DaC promotion from space \"" + $dev + "\" to \"" + $prod + "\" failed due to a unit test failure."
+                else "DaC promotion from space \"" + $dev + "\" to \"" + $prod + "\" failed at stage: " + $stage + "."
+                end),
+              "event": {"kind": "pipeline_error", "action": "dac-promotion-failure", "provider": "github-actions"},
+              "error": {"message": $log},
+              "dac": {
+                "dev_space": $dev,
+                "prod_space": $prod,
+                "promotion_tag": $tag,
+                "failed_stage": $stage,
+                "rule_ids": ($rule_ids | split(",") | map(select(length > 0))),
+                "rules_fingerprint": $fingerprint,
+                "run_url": $run_url
+              }
+            }' > "${RUNNER_TEMP}/failure-doc.json"
+
+          curl -sS --fail-with-body -X POST \
+            "${ES_ENDPOINT%/}/${FAILURE_INDEX}/_doc?refresh=true" \
+            -H "Authorization: ApiKey ${DR_API_KEY}" \
+            -H "Content-Type: application/json" \
+            --data-binary @"${RUNNER_TEMP}/failure-doc.json"
+          echo "Failure document indexed into ${FAILURE_INDEX}."
