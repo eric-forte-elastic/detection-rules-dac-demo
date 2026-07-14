@@ -13,3 +13,7 @@ unit_tests:
     - tests.test_all_rules.TestValidRules.test_bbr_validation
     - tests.test_all_rules.TestValidRules.test_rule_type_changes
     - tests.test_schemas.TestSchemas.test_eql_validation
+    - tests.test_all_rules.TestRuleMetadata.test_deprecated_rules_modified
+    - tests.test_schemas.TestESQLValidation.test_esql_data_validation
+    - tests.test_schemas.TestESQLValidation.test_esql_keep_bypass_does_not_skip_from_metadata_validation
+    - tests.test_schemas.TestESQLValidation.test_esql_metadata_bypass_does_not_skip_keep_validation
