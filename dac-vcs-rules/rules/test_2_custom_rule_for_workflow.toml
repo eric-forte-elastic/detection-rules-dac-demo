@@ -1,0 +1,54 @@
+[metadata]
+creation_date = "2026/07/14"
+integration = []
+maturity = "development"
+updated_date = "2026/07/14"
+
+[rule]
+actions = []
+author = ["3610252053"]
+description = "Test 2 custom rule for workflow"
+enabled = false
+exceptions_list = []
+false_positives = []
+filters = []
+from = "now-6m"
+index = [
+    "apm-*-transaction*",
+    "auditbeat-*",
+    "endgame-*",
+    "filebeat-*",
+    "logs-*",
+    "packetbeat-*",
+    "traces-apm*",
+    "winlogbeat-*",
+    "-*elastic-cloud-logs-*",
+]
+interval = "5m"
+language = "kuery"
+license = ""
+max_signals = 100
+name = "Test 2 custom rule for workflow "
+references = []
+related_integrations = []
+required_fields = []
+risk_score = 21
+risk_score_mapping = []
+rule_id = "cb2652fc-7d49-4f7e-8332-8bcc27e216d8"
+setup = ""
+severity = "low"
+severity_mapping = []
+tags = ["vcs"]
+threat = []
+to = "now"
+type = "query"
+
+query = '''
+event.category:"process" and process.name:"whoami2"
+'''
+
+
+
+[rule.meta]
+kibana_siem_app_url = "https://dac-workflow-dev-5350f4.kb.us-central1.gcp.cloud.es.io/s/dev/app/security"
+
